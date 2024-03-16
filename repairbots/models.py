@@ -32,10 +32,7 @@ class GlobalState:
     # store x and y dim
     
     def __init__(self, x_dim:int, y_dim:int):
-        self.grid = np.zeros((x_dim,y_dim), dtype=np.int8)
-        # ? initialize view range? in Location?
 
-    # ALL_COORDS = [(i, j) for i in range(N) for j in range(N)]
 
     def empty_cells(self) -> list[tuple]:
         """Return a list of all empty cells expressed as tuple of indices of the global state array."""
@@ -63,47 +60,20 @@ class GlobalState:
             # ? major hole creation process - is it just a part of random hole? different probability?
         
     
-    def local_view(self,center:Location,dist:int):
+    def local_view(self,center:tuple[int,int],dist:int):
         
         c= center.as_indices()
         
-        return self[min(c[1]+dist,0):min(c[1]-dist,self.y_dim),
-             min(c[0]+dist,0):min(c[0]-dist,self.x_dim)]
+        return self[min(c[1]+dist,0):min(c[1]-dist,self.y_size),
+             min(c[0]+dist,0):min(c[0]-dist,self.x_size)]
         
-
-class Location:
-    x:int
-    y:int
-    
-    def adjacent(self) -> list[Location]:
-    
-        pass
-    
-    
-        
-    def is_adjacent(self, other_loc:Location) -> bool:
-        
-        pass
-    
-    def as_indices(self) -> tuple:
-        # convert x,y coordinate system to array indices
-        pass
-
-
-# ? create RelativeLocation class? sub-class of Location?
-    # could skip the class and just create an array of np.zeros(2, dtype=np.int32) and calculate movement from there
-class RelativeLocation(Location):
-    
-    pass
-
 
         
 
-class HoleLayer:
-    loc:Location # ? remove?
-    dmg_lvl:int=0
+class HoleLayer:     
+    add_prob:float=0.05
     expand_at:int=8
-    expand_prob:float=0.2    
+    progress_prob:float=0.2
     reduce_by:int=2
     # ! need to prevent duplicates at location
     # ? consider never creating instances        
@@ -111,18 +81,27 @@ class HoleLayer:
         # should we vectorize this to just do it for all
     
     
-    def __init__(self):
+    def __init__(self,x_size:int,y_size:int):
+        """Initializes the HoleLayer instance with no holes."""
+        self.layer = np.zeros((y_size,x_size),dtype=np.int8)
         
-        pass
     
     def add(self):
-        
+        """Spawns random holes of varying sizes and densities."""
+        #np.random.choice([0,1],size=(y_size,x_size),p=[0.95,0.05])   
+                
+        # occurs with a 5% chance (captured in the environment or the add function itself?)
+        # On occurence, select a random unoccupied cell as the centre which is 8
+        # For a 3x3 matrix around it, any non-occupied cell is assigned by:
+            # np.random.choice([5,6,7,8],size=(3,3),p=[40,30,20,10])
+        # For a 5x5 matrix around it, any non-occupied cell is assigned by:
+            # np.random.choice([0,1,2,3,4],size=(5,5),p=[40,25,15,10,10])
+             
         pass
 
     # create hole_adj function that returns an array of all the adjacent locations
-        
-    @classmethod
-    def reduce(cls,hole_layer:np.ndarray,agent_layer:np.ndarray) -> np.ndarray:
+            
+    def reduce(self,hole_layer:np.ndarray,agent_layer:np.ndarray) -> None:
         # ? vectorize?
             # ? create an action layer to determine which agents are taking the repair action?
         # should this be under the agent methods? or completely independent?            
@@ -135,29 +114,33 @@ class HoleLayer:
         
         # self.dmg_lvl -= self.reduce_by
         
-        pass
+        return None
+        
+    def progress(self,hole_layer:np.ndarray,agent_layer:np.ndarray) -> None:
+        """Takes the existing hole layer and expands to adjacent cells where no agents are present based on
+        progress_prob. For other holes, if they are adjacent to a full hole, then their damage increments by 1.
+        If they are not adjacent, then they increase by 1 depending on the progress_prob."""        
+        
+        full_hole_adj = utils.find_adjacent(hole_layer==self.expand_at)
+        other_holes = np.logical_and(hole_layer>0, hole_layer<self.expand_at)        
+        
+        # expand in cells adjacent to full holes excluding agent_layer and other_holes which indicate blocking objects
+        expandable_at = np.clip(full_hole_adj - agent_layer - other_holes,0,1)        
+        expand_to = np.where(expandable_at * np.random.rand(hole_layer.shape) >= 1-self.progress_prob,1,0)        
+        
+        # increment other holes adj to full holes
+        adj_inc = np.where(np.logical_and(full_hole_adj,other_holes),1,0)        
+        
+        # probabilistically increment other holes not adj to full holes
+        other_nonadj_holes = np.clip(other_holes-full_hole_adj,0,1)
+        rand_inc = np.where(other_nonadj_holes * np.random.rand(hole_layer.shape) >= 1-self.progress_prob,1,0)        
+        
+        new_hole_layer = hole_layer + expand_to + adj_inc + rand_inc
+        
+        self.layer = new_hole_layer
+        return None
     
-    @classmethod
-    def progress(cls,hole_layer:np.ndarray,agent_layer:np.ndarray) -> np.ndarray:
-        """Takes the existing hole layer and expands to adjacent cells where no agents are present based on the 
-        class expand_at probability. Then increments the damage level of all other holes by 1."""        
-        
-        # expand in cells adjacent to full holes
-        # deduct the agent_layer which indicates an agent is occupying a possible expansion spot
-        expandable_at = np.clip(utils.find_adjacent(hole_layer==cls.expand_at) - agent_layer,0,1)
-        expand_roll = expandable_at * np.random.rand(hole_layer.shape)
-        expand_to = np.where(expand_roll <= cls.expand_prob,1,0)
-        
-        # increment other holes
-        inc_lvl = np.where(np.logical_and(hole_layer>0, hole_layer<cls.expand_at),hole_layer+1,hole_layer)
-        
-        new_hole_layer = expand_to + inc_lvl
-        
-        return new_hole_layer
-    
-    def draw(self):
-        # ? I think everything is drawn at once
-        pass
+    # TODO: draw function
     
 class AgentLayer:
     
