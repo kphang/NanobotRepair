@@ -36,7 +36,7 @@ class GlobalState:
 
     def empty_cells(self) -> list[tuple]:
         """Return a list of all empty cells expressed as tuple of indices of the global state array."""
-        return list(map(tuple,np.transpose(np.nonzero(self.grid==0))))
+        return list(map(tuple,np.transpose(np.where(self.grid==0))))
 
     def update(self):
         
@@ -66,42 +66,78 @@ class GlobalState:
         
         return self[min(c[1]+dist,0):min(c[1]-dist,self.y_size),
              min(c[0]+dist,0):min(c[0]-dist,self.x_size)]
-        
 
-        
 
-class HoleLayer:     
+class Layer():
+    
+    def __init__(self,x_size:int,y_size:int) -> np.ndarray:
+        """Initializes the Layer instance with no zeros (no objects)."""
+        self.layer = np.zeros((y_size,x_size),dtype=np.int8)
+    
+    def empty_cells(self) -> list[tuple]:
+        """Return a list of all empty cells expressed as tuple of indices of the global state array."""
+        return list(map(tuple,np.transpose(np.where(self.grid==0))))
+        
+    def local_view(self,center:tuple[int,int],dist:int,pad_val:int) -> np.ndarray:
+        """Creates a sub-array of the layer centered around a point with a given number of rows and columns surrounding.
+        If the center and distance would result in a shape outside the bounds of the original layer, the available data
+        is extracted and padded."""
+        
+        arr = self.layer                
+        top = center[0]-dist
+        bottom = center[0]+dist+1
+        left = center[1]-dist
+        right = center[1]+dist+1
+        
+        try:
+            local_view = arr[top:bottom,left:right]            
+            assert local_view.shape == (2*dist+1,2*dist+1)
+            
+        except:
+            top_pad = abs(top) if top <0 else 0
+            bottom_pad = bottom-arr.shape[0] if bottom >arr.shape[0] else 0
+            left_pad = abs(left) if left <0 else 0
+            right_pad = right-arr.shape[1] if right >arr.shape[1] else 0            
+            
+            layer_area = arr[max(top,0):min(bottom,arr.shape[0]),
+                        max(left,0):min(right,arr.shape[1])]
+            
+            local_view = np.pad(layer_area,((top_pad,bottom_pad),(left_pad,right_pad)),"constant",constant_values=pad_val)
+        
+        return local_view
+
+class HoleLayer(Layer):     
     add_prob:float=0.05
     expand_at:int=8
     progress_prob:float=0.2
-    reduce_by:int=2
-    # ! need to prevent duplicates at location
-    # ? consider never creating instances        
-        # since the global state contains the dmg_lvl of all, just vectorize everything?
-        # should we vectorize this to just do it for all
+    reduce_by:int=2    
     
-    
-    def __init__(self,x_size:int,y_size:int):
-        """Initializes the HoleLayer instance with no holes."""
-        self.layer = np.zeros((y_size,x_size),dtype=np.int8)
+    def add(self,agent_layer:AgentLayer) -> None:
+        """Based on add_prob, spawns holes in a random location of the layer. The approximate size of the hole will be 
+        5x5, however may be cut off if spawned in corners. To actual size and formation is not deterministic.
+        The center will be a single level 8 hole, surrounded by holes ranging from 5-8, which are then surrounded
+        by cells ranging from 0 (no-hole) to 4."""        
         
-    
-    def add(self):
-        """Spawns random holes of varying sizes and densities."""
-        #np.random.choice([0,1],size=(y_size,x_size),p=[0.95,0.05])   
+        if np.random.rand() > self.add_prob:
+            return None
+        
+        center=(1,1)#np.random.choice(self.empty_cells
                 
-        # occurs with a 5% chance (captured in the environment or the add function itself?)
-        # On occurence, select a random unoccupied cell as the centre which is 8
-        # For a 3x3 matrix around it, any non-occupied cell is assigned by:
-            # np.random.choice([5,6,7,8],size=(3,3),p=[40,30,20,10])
-        # For a 5x5 matrix around it, any non-occupied cell is assigned by:
-            # np.random.choice([0,1,2,3,4],size=(5,5),p=[40,25,15,10,10])
-             
+        valid_target_zone = self.local_view(self.layer,center,2)==0
+        
+        new_hole = np.random.choice([0,1,2,3,4],size=(5,5),p=[.4,.25,.15,.10,.10])
+        new_hole[1:4,1:4] = np.random.choice([5,6,7,8],size=(3,3),p=[.4,.3,.2,.1])
+        new_hole[2,2] = 8
+        
+        # place array values where the cells from the existing hole_layer and agent_layer = 0
+        #np.where(valid_target_zone,new_hole,target_zone)
+        # ? how to place if shapes are different?
+            # new_hole[2,2] has to be on the center
+        
         pass
 
-    # create hole_adj function that returns an array of all the adjacent locations
             
-    def reduce(self,hole_layer:np.ndarray,agent_layer:np.ndarray) -> None:
+    def reduce(self,agent_layer:AgentLayer) -> None:
         # ? vectorize?
             # ? create an action layer to determine which agents are taking the repair action?
         # should this be under the agent methods? or completely independent?            
@@ -114,35 +150,36 @@ class HoleLayer:
         
         # self.dmg_lvl -= self.reduce_by
         
-        return None
+        #return None
+        pass
         
-    def progress(self,hole_layer:np.ndarray,agent_layer:np.ndarray) -> None:
+    def progress(self,agent_layer:AgentLayer) -> None:
         """Takes the existing hole layer and expands to adjacent cells where no agents are present based on
         progress_prob. For other holes, if they are adjacent to a full hole, then their damage increments by 1.
         If they are not adjacent, then they increase by 1 depending on the progress_prob."""        
         
-        full_hole_adj = utils.find_adjacent(hole_layer==self.expand_at)
-        other_holes = np.logical_and(hole_layer>0, hole_layer<self.expand_at)        
+        full_hole_adj = utils.find_adjacent(self.layer==self.expand_at)
+        other_holes = np.logical_and(self.layer>0, self.layer<self.expand_at)        
         
         # expand in cells adjacent to full holes excluding agent_layer and other_holes which indicate blocking objects
         expandable_at = np.clip(full_hole_adj - agent_layer - other_holes,0,1)        
-        expand_to = np.where(expandable_at * np.random.rand(hole_layer.shape) >= 1-self.progress_prob,1,0)        
+        expand_to = np.where(expandable_at * np.random.rand(self.layer.shape) >= 1-self.progress_prob,1,0)        
         
         # increment other holes adj to full holes
         adj_inc = np.where(np.logical_and(full_hole_adj,other_holes),1,0)        
         
         # probabilistically increment other holes not adj to full holes
         other_nonadj_holes = np.clip(other_holes-full_hole_adj,0,1)
-        rand_inc = np.where(other_nonadj_holes * np.random.rand(hole_layer.shape) >= 1-self.progress_prob,1,0)        
+        rand_inc = np.where(other_nonadj_holes * np.random.rand(self.layer.shape) >= 1-self.progress_prob,1,0)        
         
-        new_hole_layer = hole_layer + expand_to + adj_inc + rand_inc
+        new_hole_layer = self.layer + expand_to + adj_inc + rand_inc
         
         self.layer = new_hole_layer
         return None
     
     # TODO: draw function
     
-class AgentLayer:
+class AgentLayer(Layer):
     
     # represents the status of agents on the map
     
