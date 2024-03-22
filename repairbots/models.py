@@ -2,7 +2,6 @@ from __future__ import annotations
 import numpy as np
 import random
 from typing import Optional
-import utils
 
 # ? implement a grid class that stores all locations and draws them?
     # problem depending on AEC sequenced actions - won't update until all are complete
@@ -36,20 +35,42 @@ class Layer():
     def empty_cells(self) -> list[tuple]:
         """Return a list of all empty cells expressed as tuple of indices of the global state array."""
         return list(map(tuple,np.transpose(np.where(self.layer==0))))
+    
+    def find_adjacent(self,filter:np.array) -> np.ndarray:
+        """For an array of 0's an 1's, encodes cells adjacent to 1's with 1 and returns all others
+        (including the original 1's) as 0's."""
         
-    def local_view(self,center:tuple[int,int],dist:int,pad_val:int|None,ret_sliceidx:bool=False
+        arr = self.layer[filter].copy()
+        if (arr>1).any() or (arr<0).any():        
+            raise ValueError("arr must contain only 0's or 1's")
+            
+        y_len, x_len = arr.shape
+        
+        # shifts in each direction so that 1's will be put in all adjacent cells to the original
+        l = np.c_[arr[:,1:],np.zeros(y_len)] 
+        r = np.c_[np.zeros(y_len),arr[:,:-1]]
+        u = np.r_[arr[1:,:],[np.zeros(x_len)]]
+        d = np.r_[[np.zeros(x_len)],arr[:-1,:]]
+            
+        new_arr = np.clip((l+r+u+d) - arr,0,1) # deduct the original, clip negatives
+
+        return new_arr
+        
+    def local_view(self,center:tuple[int,int],dist:int,pad_val:int|None,
+                   replace_center:Optional[int]=None,ret_sliceidx:bool=False
                    ) -> np.ndarray|tuple[np.ndarray]:
         """Creates a sub-array of the layer centered around a point with a given number of rows and columns surrounding.
         If the center and distance would result in a shape outside the bounds of the original layer, the available data
         is extracted and padded."""
         
-        arr = self.layer                
+        arr = self.layer.copy()
+        if replace_center:
+            arr[center] = replace_center
+
         top = center[0]-dist
         bottom = center[0]+dist+1
         left = center[1]-dist
         right = center[1]+dist+1
-        
-        # ? store slice info? how can that help us know how to slice the hole?
         
         try:
             sliceidx = np.s_[top:bottom,left:right]
@@ -69,12 +90,14 @@ class Layer():
                 left_pad = abs(left) if left <0 else 0
                 right_pad = right-arr.shape[1] if right >arr.shape[1] else 0            
 
-                local_view = np.pad(layer_area,((top_pad,bottom_pad),(left_pad,right_pad)),"constant",constant_values=pad_val)
-        
+                local_view = np.pad(layer_area,((top_pad,bottom_pad),(left_pad,right_pad)),"constant",constant_values=pad_val)        
+            
         if ret_sliceidx:
             return local_view, sliceidx
         else:
             return local_view
+        
+        # ? add an arg to replace the center with another value like 0
 
 class Agent:    
     obs_range: int = 2 # ! adjust to 5
@@ -130,17 +153,23 @@ class AgentLayer(Layer):
         for rank,loc in enumerate(locs):
             self.agents[rank+1]=Agent(loc,rank+1)
             self.layer[loc] = rank+1
-            
-    def relative_rank_layer(self,agent_idx) -> np.ndarray:
         
-        lv = self.local_view(self.agents[agent_idx].position,Agent.obs_range,0)
-        rel_rank_layer = np.where(lv==agent_idx,0,lv)
-        rel_rank_layer = np.where((rel_rank_layer!=0) & (agent_idx > rel_rank_layer),1,rel_rank_layer)
-        rel_rank_layer = np.where((rel_rank_layer!=0) & (agent_idx < rel_rank_layer),-1,rel_rank_layer)
-        return rel_rank_layer
+            
+    def agent_view(self,agent_idx) -> np.ndarray:
+        
+        lv = self.local_view(self.agents[agent_idx].position,Agent.obs_range,0,0)            
+        lv2 = np.where((lv!=0) & (agent_idx > lv),1,lv)
+        lv3 = np.where((lv2!=0) & (agent_idx < lv2),-1,lv2)
+        return lv3
         
     
-    def process_moves(self, agent_idx, action):
+    def process_move(self, agent_idx, action, hole_layer):
+        
+        # moves are processed sequentially by agent_idx
+        
+        
+        #[[-1, 0], [1, 0], [0, 1], [0, -1], [0, 0]]
+        # 
         
         # update target if it exists
         
@@ -173,7 +202,7 @@ class AgentStatusLayer(Layer):
     # is the status layer only to help with rendering and action masking?
     # can it help the agents make decisions? if not then don't need to give them access as an observation
     
-    
+    # ! ideally run and store split by status once each turn and then call local view on it
     def split_by_status(self) -> np.ndarray:
             # splits the status layer into multiple binary layers where each status is represented as 0,1
             sl = self.layer
@@ -183,6 +212,9 @@ class AgentStatusLayer(Layer):
             
             return n_dim_sl
     
+    def agent_view(self,agent_idx) -> np.ndarray[3,3]:
+
+        ...
 
 
 class HoleLayer(Layer):     
@@ -238,10 +270,10 @@ class HoleLayer(Layer):
     def progress(self,agent_layer:AgentLayer) -> None:
         """Takes the existing hole layer and expands to adjacent cells where no agents are present based on
         progress_prob. For other holes, if they are adjacent to a full hole, then their damage increments by 1.
-        If they are not adjacent, then they increase by 1 depending on the progress_prob."""        
+        If they are not adjacent, then they increase by 1 depending on the progress_prob."""
         
-        full_hole_adj = utils.find_adjacent(self.layer==self.expand_at)
-        other_holes = np.logical_and(self.layer>0, self.layer<self.expand_at)        
+        full_hole_adj = self.find_adjacent(self.layer==self.expand_at)
+        other_holes = np.logical_and(self.layer>0, self.layer<self.expand_at)
         
         # expand in cells adjacent to full holes excluding agent_layer and other_holes which indicate blocking objects
         expandable_at = np.clip(full_hole_adj - agent_layer - other_holes,0,1)        

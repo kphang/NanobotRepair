@@ -18,3 +18,7 @@ def find_adjacent(arr:np.ndarray) -> np.ndarray:
     new_arr = np.clip((l+r+u+d) - arr,0,1) # deduct the original, clip negatives
 
     return new_arr
+
+# def empty_cells(arr:np.ndarray,0) -> list[tuple]:
+#         """Return a list of all empty cells expressed as tuple of indices of the global state array."""
+#         return list(map(tuple,np.transpose(np.where(arr==0))))
