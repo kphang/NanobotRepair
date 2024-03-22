@@ -29,8 +29,8 @@ import utils
 
 class Layer():
     
-    def __init__(self,x_size:int,y_size:int) -> np.ndarray:
-        """Initializes the Layer instance with no zeros (no objects)."""
+    def __init__(self,x_size:int,y_size:int):
+        """Initializes the Layer instance with zeros (no objects)."""
         self.layer = np.zeros((y_size,x_size),dtype=np.int8)
             
     def empty_cells(self) -> list[tuple]:
@@ -77,16 +77,19 @@ class Layer():
             return local_view
 
 class Agent:    
-    from_hole: Optional[tuple[int,int]] = None
-    req_n_bots: Optional[int] = None
-    to_hole: Optional[tuple[int,int]] = None
+    obs_range: int = 2 # ! adjust to 5
     
-    # should we just store the position to simplify things?
-    # TODO: view local agent layer as relative hierarchy
     
-    def __init__(self,xy:tuple[int,int]):
+    def __init__(self,xy:tuple[int,int],rank:int):
+        
         # test xy in bounds
-        ...
+        self.position = xy
+        self.rank = rank
+        from_hole: Optional[tuple[int,int]] = None
+        req_n_bots: Optional[int] = None
+        to_hole: Optional[tuple[int,int]] = None
+        
+        
     
     def move(self):
         
@@ -116,9 +119,47 @@ class Agent:
 
 class AgentLayer(Layer):
     
+    def __init__(self,x_size:int,y_size:int, n_agents):
+        # agents are identified by a number which also represents their rank
+        # actions are processed sequentially according to rank to minimize co-ordination problems
+        super().__init__(x_size,y_size)
+        self.agents = {}
+        
+        locs = random.sample(self.empty_cells(),n_agents)
+        # indexing starts at 1 to avoid 0 which represents no agents in the space
+        for rank,loc in enumerate(locs):
+            self.agents[rank+1]=Agent(loc,rank+1)
+            self.layer[loc] = rank+1
+            
+    def relative_rank_layer(self,agent_idx) -> np.ndarray:
+        
+        lv = self.local_view(self.agents[agent_idx].position,Agent.obs_range,0)
+        rel_rank_layer = np.where(lv==agent_idx,0,lv)
+        rel_rank_layer = np.where((rel_rank_layer!=0) & (agent_idx > rel_rank_layer),1,rel_rank_layer)
+        rel_rank_layer = np.where((rel_rank_layer!=0) & (agent_idx < rel_rank_layer),-1,rel_rank_layer)
+        return rel_rank_layer
+        
+    
+    def process_moves(self, agent_idx, action):
+        
+        # update target if it exists
+        
+        ...
+    
+    def process_repairs(self, agent_idx, action):
+        
+        ...    
+    
+    
+                            
+    
+
+        
+class AgentStatusLayer(Layer):
+    
     # represents the status of agents on the map
     
-    # 1:"MOVING"
+    # 1:"NO STATUS"
     #   - white, last took a move action 
     # 2:"REPAIRING"
     #   - green, last took the repair action
@@ -132,39 +173,10 @@ class AgentLayer(Layer):
     # is the status layer only to help with rendering and action masking?
     # can it help the agents make decisions? if not then don't need to give them access as an observation
     
-    # ADDITIONALLY
-    # agents are identified by a number which also represents their rank
-    # since actions are processed by the game sequentially according to rank, this provides a potential solution to
-    # coordination problems
-    # agents get access to both versions?        
     
-    def add_agents(self,n_agents:int):
-        
-        
-        # indexing starts at 1 to avoid 0 which represents no agents
-        self.agents = {i:Agent() for i in range(1,n_agents+1)}
-        
-        ...
-    
-    def move_agents(self, agent_idx, action):
-        
-        # update target if it exists
-        
-        ...
-    
-    def relative_rank_layer(self,agent_idx) -> np.ndarray:
-        il = self.idx_layer
-        rel_rank_layer = np.where(il>agent_idx,1,0)
-        return rel_rank_layer
-    
-                            
-    
-
-        
-class AgentStatusLayer(Layer):
-    def split_status_layer(self) -> np.ndarray:
+    def split_by_status(self) -> np.ndarray:
             # splits the status layer into multiple binary layers where each status is represented as 0,1
-            sl = self.status_layer
+            sl = self.layer
             n_dim_sl = np.array()
             for scode in range(4):
                 n_dim_sl.append(np.where(sl==scode,1,0))
