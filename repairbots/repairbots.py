@@ -37,7 +37,7 @@ class raw_env(AECEnv, EzPickle):
     }
 
     def __init__(self, *args, **kwargs):
-        EzPickle.__init__(self, *args, **kwargs)        
+        EzPickle.__init__(self, *args, **kwargs)
         self.env = _env(*args, **kwargs)
         self.render_mode = kwargs.get("render_mode")
         if self.render_mode=="human":
@@ -51,7 +51,7 @@ class raw_env(AECEnv, EzPickle):
         self._agent_selector = agent_selector(self.agents)
                 
         self.observation_spaces = dict(zip(self.agents, self.env.observation_space))
-        self.action_spaces = dict(zip(self.agents, self.env.action_space))        
+        self.action_spaces = dict(zip(self.agents, self.env.action_space)
 
         self.render_mode = self.env.render_mode
         self.closed = False
