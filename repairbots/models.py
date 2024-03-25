@@ -1,26 +1,8 @@
 from __future__ import annotations
 import numpy as np
-import random
 from typing import Optional
 
 
-# location-based actions
-    # communicate requires other agents in view
-        # reduces # to communicate
-        
-# objects store locations or is there a collection of locations and the objects in those locations?
-    # and then grid combines them?
-    
-    # Location can have ordering dunder methods which can then be used to sort and shape
-
-# global state is a convenience class to simplify the main environment class 
-# to distinguish process from the functions used to process transactions
-
-# Location is used for object relative processing
-    
-
-
-# 
 
 class Layer():
     
@@ -137,21 +119,21 @@ class Agent:
             self.position_x = target_pos[1]
             
             if self.hole_noted==1: # if hole_noted, then adjust relative position
+                old_dist_to = abs(self.to_hole_y) + abs(self.to_hole_x)
                 self.to_hole_y += delta
                 self.to_hole_x += delta
+                new_dist_to = abs(self.to_hole_y) + abs(self.to_hole_x)
                 
-                if # ! reward if move puts closer and the status was responding
-                reward = 0.5
+                if new_dist_to < old_dist_to: # small reward if closer to hole
+                    reward = 0.5
                 # remove hole_noted if target reached
                 if self.position_x==self.to_hole_x and self.position_y==self.to_hole_y:                                
                     self.hole_noted = 0
                     self.status = 1
-                            
-        # is tehre an incentive to note than just circle the zone?
-            
-        # ! set status to 1 under certain conditions?
-        if self.status==4:
-            
+                # should it be removed after a certain number of turns?        
+        
+        if self.status==4: # if previously repairing, set status to moving
+            self.status = 1
         
         ...
     
@@ -177,7 +159,7 @@ class Agent:
         view. For each of those agents, the sharing agent's obshole_relloc is stored to their obshole_relloc. Each 
         agent shared with decreases the sharers target number of sharing available.
         """        
-        # ? should this be action masked?
+        # ! action mask at env step
         al_av = agent_layer.agent_view(self.rank,relative=False)
         asl_av = agent_status_layer.agent_view(self.rank)[0]        
         other_agents = al_av[(al_av!=0) & (asl_av!=0)]
@@ -276,7 +258,7 @@ class HoleLayer(Layer):
         The center will be a single level 8 hole, surrounded by holes ranging from 5-8, which are then surrounded
         by cells ranging from 0 (no-hole) to 4."""        
         
-        center = random.choice(self.empty_cells())        
+        center = self.emtpy_cells()[np.random.choice(len(self.empty_cells()))]
         
         hole_area1, hole_area_idx1 = self.local_view(center,dist=1,pad_val=None,ret_sliceidx=True)        
         hole_area2, hole_area_idx2 = self.local_view(center,dist=2,pad_val=None,ret_sliceidx=True)
