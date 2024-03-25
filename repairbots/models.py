@@ -3,15 +3,11 @@ import numpy as np
 import random
 from typing import Optional
 
-# ? implement a grid class that stores all locations and draws them?
-    # problem depending on AEC sequenced actions - won't update until all are complete
-# ? action-masking is location-relative; how does this work?
 
 # location-based actions
     # communicate requires other agents in view
         # reduces # to communicate
         
-
 # objects store locations or is there a collection of locations and the objects in those locations?
     # and then grid combines them?
     
@@ -30,17 +26,19 @@ class Layer():
     
     def __init__(self,x_size:int,y_size:int):
         """Initializes the Layer instance with zeros (no objects)."""
+        self.x_size = x_size
+        self.y_size = y_size
         self.layer = np.zeros((y_size,x_size),dtype=np.int8)
             
     def empty_cells(self) -> list[tuple]:
         """Return a list of all empty cells expressed as tuple of indices of the global state array."""
         return list(map(tuple,np.transpose(np.where(self.layer==0))))
     
-    def find_adjacent(self,filter:np.array) -> np.ndarray:
+    def find_adjacent(self,arr_filter:np.ndarray) -> np.ndarray:
         """For an array of 0's an 1's, encodes cells adjacent to 1's with 1 and returns all others
         (including the original 1's) as 0's."""
         
-        arr = self.layer[filter].copy()
+        arr = self.layer[arr_filter].copy()
         if (arr>1).any() or (arr<0).any():        
             raise ValueError("arr must contain only 0's or 1's")
             
@@ -97,91 +95,136 @@ class Layer():
         else:
             return local_view
         
-        # ? add an arg to replace the center with another value like 0
 
 class Agent:    
     obs_range: int = 2 # ! adjust to 5
     
     
     def __init__(self,xy:tuple[int,int],rank:int):
-        
-        # test xy in bounds
-        self.position = xy
+                
+        self.position_y = xy[0]
+        self.position_x: xy[1]
         self.rank = rank
-        from_hole: Optional[tuple[int,int]] = None
-        req_n_bots: Optional[int] = None
-        to_hole: Optional[tuple[int,int]] = None
+        self.status = 1 # 1:AVAILABLE, 2: REPAIRING, 3:SEEKING HELP, 4:RESPONDING        
+        self.hole_noted = 0        
+        self.req_n_bots: Optional[int] = None
+        self.to_hole_x: int = 0
+        self.to_hole_y: int = 0
         
-        
+    @property
+    def position(self):
+        return (self.position_y,self.position_x)
     
-    def move(self):
+    def move(self,action:int,hole_layer:HoleLayer,agent_layer:AgentLayer):
         
-        # if obshole_relloc is not none, then also adjust relative position
+        if action==0:
+            delta = [-1,0]
+        elif action==1:
+            delta = [1,0]
+        elif action==2:
+            delta = [0,-1]
+        elif action==3:
+            delta = [0,1]
+        
+        target_pos = (self.position_y+delta[0],self.position_x+delta[1])
+        # update if within bounds and space is empty
+        in_bounds = (target_pos[0] >=0 and target_pos[0] < self.layer.shape[0] and 
+            target_pos[1] >=0 and target_pos[1] < self.layer.shape[1])
+        space_empty = hole_layer[target_pos]==0 and agent_layer[target_pos]==0
+        
+        if in_bounds and space_empty:
+            self.position_y = target_pos[0]
+            self.position_x = target_pos[1]
+            
+            if self.hole_noted==1: # if hole_noted, then adjust relative position
+                self.to_hole_y += delta
+                self.to_hole_x += delta
+                
+                if # ! reward if move puts closer and the status was responding
+                reward = 0.5
+                # remove hole_noted if target reached
+                if self.position_x==self.to_hole_x and self.position_y==self.to_hole_y:                                
+                    self.hole_noted = 0
+                    self.status = 1
+                            
+        # is tehre an incentive to note than just circle the zone?
+            
+        # ! set status to 1 under certain conditions?
+        if self.status==4:
+            
         
         ...
     
-    def note_hole(self,req_n_bots:int) -> None:
-        """Used on agent action selection "NOTE HOLE" which is action masked to only be available with a hole in view.
-        Tracks current position as (0,0) and all subsequent movements are calculated from this position.
-        """                
-        self.obshole_relloc = (0,0)
-        self.req_n_bots = req_n_bots
+    def repair(self):
         
-        return None
+        if self.status==1: # status only changes to 4 if previously available, otherwise retains status
+            self.status = 4
+        ...
     
-    def share_info(self, bots_in_view:list[Agent]) -> None:
+    def note_hole(self,req_n_bots:int) -> None:
+        """Used on agent action selection "NOTE HOLE" which is action masked to only be available with a hole in view 
+        and if the agent had an available status. Tracks current position as (0,0) and all subsequent movements are 
+        calculated from this position.
+        """                        
+        self.status = 3
+        self.from_hole = (0,0)
+        self.req_n_bots = req_n_bots
+        reward = 1 # small reward to take advantage of the skill
+        return reward
+    
+    def share_info(self,agent_layer:AgentLayer,agent_status_layer:AgentStatusLayer) -> None:
         """Used on agent action selection "SHARE INFO" which is action masked to only be available with other agents in
         view. For each of those agents, the sharing agent's obshole_relloc is stored to their obshole_relloc. Each 
         agent shared with decreases the sharers target number of sharing available.
         """        
-        for b in bots_in_view:
-            b.target_relloc = self.obshole_relloc
-            self.req_n_bots -= 1    
+        # ? should this be action masked?
+        al_av = agent_layer.agent_view(self.rank,relative=False)
+        asl_av = agent_status_layer.agent_view(self.rank)[0]        
+        other_agents = al_av[(al_av!=0) & (asl_av!=0)]
         
-        return None
+        for other_agent in other_agents: # should only run while req_n_bots > 0
+            while self.req_n_bots > 0:
+                other_agent.to_hole = self.from_hole + ... # ! add distance from other agents
+                self.req_n_bots -= 1
+        
+        if self.req_n_bots <= 0:
+            self.status = 1
+        
+        # reward communicating for each agent
+        rewards = other_agents
+        
+        return rewards
+    
+    def internals():
+        # generate agent belief state for obs space
 
 class AgentLayer(Layer):
     
-    def __init__(self,x_size:int,y_size:int, n_agents):
-        # agents are identified by a number which also represents their rank
-        # actions are processed sequentially according to rank to minimize co-ordination problems
-        super().__init__(x_size,y_size)
-        self.agents = {}
+    def __init__(self,x_size:int,y_size:int,agents:dict[int:Agent]):
+        self.x_size = x_size
+        self.y_size = y_size
+        self.agents = agents
+        # ? need to create layer?
+    
+    def update(self):
+        # update based on all the agent positions        
+        new_layer = np.zeros(shape=(self.y_size,self.x_size),dtype=np.int8)
+        for rank,agent in self.agents:
+            new_layer[agent.position] = rank
+        return new_layer
+    
+    def agent_view(self,agent_id:int,relative=True) -> np.ndarray:
+                
+        lv = self.local_view(self.agents[agent_id].position,Agent.obs_range,0,0)            
         
-        locs = random.sample(self.empty_cells(),n_agents)
-        # indexing starts at 1 to avoid 0 which represents no agents in the space
-        for rank,loc in enumerate(locs):
-            self.agents[rank+1]=Agent(loc,rank+1)
-            self.layer[loc] = rank+1
-        
+        if relative:
+            lv = np.where((lv!=0) & (agent_id > lv),1,lv)
+            lv = np.where((lv!=0) & (agent_id < lv),-1,lv)
             
-    def agent_view(self,agent_idx) -> np.ndarray:
-        
-        lv = self.local_view(self.agents[agent_idx].position,Agent.obs_range,0,0)            
-        lv2 = np.where((lv!=0) & (agent_idx > lv),1,lv)
-        lv3 = np.where((lv2!=0) & (agent_idx < lv2),-1,lv2)
-        return lv3
+        return lv
         
     
-    def process_move(self, agent_idx, action, hole_layer):
         
-        # moves are processed sequentially by agent_idx
-        
-        
-        #[[-1, 0], [1, 0], [0, 1], [0, -1], [0, 0]]
-        # 
-        
-        # update target if it exists
-        
-        ...
-    
-    def process_repairs(self, agent_idx, action):
-        
-        ...    
-    
-    
-                            
-    
 
         
 class AgentStatusLayer(Layer):
@@ -202,6 +245,8 @@ class AgentStatusLayer(Layer):
     # is the status layer only to help with rendering and action masking?
     # can it help the agents make decisions? if not then don't need to give them access as an observation
     
+    # ? default status when starting?
+    
     # ! ideally run and store split by status once each turn and then call local view on it
     def split_by_status(self) -> np.ndarray:
             # splits the status layer into multiple binary layers where each status is represented as 0,1
@@ -212,7 +257,7 @@ class AgentStatusLayer(Layer):
             
             return n_dim_sl
     
-    def agent_view(self,agent_idx) -> np.ndarray[3,3]:
+    def agent_view(self,agent_id) -> np.ndarray[3,3]:
 
         ...
 
@@ -293,3 +338,7 @@ class HoleLayer(Layer):
     
     # TODO: draw function
     
+class MapLayer(Layer):
+    
+    def agent_view(self,position):
+        return self.local_view(position,Agent.obs_range,1)
