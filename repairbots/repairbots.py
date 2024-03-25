@@ -51,7 +51,7 @@ class raw_env(AECEnv, EzPickle):
         self._agent_selector = agent_selector(self.agents)
                 
         self.observation_spaces = dict(zip(self.agents, self.env.observation_space))
-        self.action_spaces = dict(zip(self.agents, self.env.action_space)
+        self.action_spaces = dict(zip(self.agents, self.env.action_space))
 
         self.render_mode = self.env.render_mode
         self.closed = False

@@ -12,9 +12,9 @@ import models
 class RepairBots:
     def __init__(
         self,        
-        x_size: int = 350,
-        y_size: int = 350,
-        max_cycles:int=500,
+        x_size: int = 100,
+        y_size: int = 100,
+        max_cycles:int=300,
         game_over: float = 0.25,
         shared_reward: bool = True,
         num_agents: int = 20,
@@ -31,14 +31,11 @@ class RepairBots:
         
         # REWARD SETUP
         # self.shared_reward = shared_reward # ? might need to change this
-        # self.local_ratio = 1.0 - float(self.shared_reward)                
-        self.latest_reward_state = [0 for _ in range(self.num_agents)]
-        self.latest_done_state = [False for _ in range(self.num_agents)]
-        self.latest_obs = [None for _ in range(self.num_agents)]
+        # self.local_ratio = 1.0 - float(self.shared_reward)                        
     
         # SPACES
         obs_space = Dict({
-            "local_view":Box(
+            "agent_view":Box(
                 low=-1,
                 high=8,
                 shape=(self.y_size,self.x_size,7), # map,holes,rel_rank,status(4)
@@ -47,19 +44,22 @@ class RepairBots:
             "agent_state": Box(
                 low=0,
                 high=max(self.x_size,self.y_size,self.num_agents),
-                shape=(5,) # from_hole_x,from_hole_y,call_n_bots,to_hole_x,to_hole_y
+                shape=(4,), # hole_noted,req_n_bots,to_hole_x,to_hole_y
                 dtype=np.int8
             )
         })
         self.observation_space = [obs_space for _ in range(self.num_agents)]
-        act_space = Discrete(7)
+        act_space = Dict({
+            "standard_actions":Discrete(7),
             # 0: UP
             # 1: DOWN
             # 2: LEFT
             # 3: RIGHT
             # 4: REPAIR
             # 5: NOTE
-            # 6: SHARE        
+            # 6: SHARE
+            "req_n_bots":Discrete(self.num_agents-1)
+        })
         self.action_space = [act_space for _ in range(self.num_agents)]
         
         # AGENTS
@@ -78,20 +78,7 @@ class RepairBots:
         self.frames = 0
         
         self.reset()
-    
-    def _seed(self, seed=None): # ! to review
-        self.np_random, seed_ = seeding.np_random(seed)
-        try:
-            policies = [self.evader_controller, self.pursuer_controller]
-            for policy in policies:
-                try:
-                    policy.set_rng(self.np_random)
-                except AttributeError:
-                    pass
-        except AttributeError:
-            pass
-
-        return [seed_]
+        
 
     def render(self):
         ...
@@ -108,36 +95,24 @@ class RepairBots:
     
     def reset(self, seed:int):
         
-        map_size = self.x_size, self.y_size
-        
+        map_size = self.x_size, self.y_size        
         self.map_layer = MapLayer(map_size)
         
-        self.agents = {}
+        self.agent_dict = {}
         # create agents randomly around the map        
         locs = random.sample(self.agent_layer.empty_cells(),self.num_agents)
         # indexing starts at 1 to avoid 0 which represents no agents in the space
         for rank,loc in enumerate(locs):
-            self.agents[rank+1]=Agent(loc,rank+1)
-        self.agent_layer = AgentLayer(map_size,self.agents).update()
-        
-        
-        self.rewards = {agent: 0 for agent in self.agents}
-        self._cumulative_rewards = {agent: 0 for agent in self.agents}
-        self.terminations = {agent: False for agent in self.agents}
-        self.truncations = {agent: False for agent in self.agents}
-        self.infos = {agent: {} for agent in self.agents}
-        self.state = {agent: NONE for agent in self.agents}
-        self.observations = {agent: NONE for agent in self.agents}
-        self.num_moves = 0
-        
-        self._agent_selector = agent_selector(self.agents) # ! since I use a dict need to fix
-        self.agent_selection = self._agent_selector.next()
-        
+            self.agent_dict[rank+1]=Agent(loc,rank+1)
+        self.agent_layer = AgentLayer(map_size,self.agent_dict).update()
         
         self.hole_layer = models.HoleLayer(self.x_size,self.y_size)
         self.agent_status_layer = models.AgentStatusLayer(self.x_size,self.y_size)
+            # ? what are the statuses on the first turn?
+        self.latest_reward_state = [0 for _ in range(self.num_agents)]                
         
-        # ! Need to return initial observations
+        # return the first agent's observation
+        return self.safely_observe(0)
         
         ...
         
@@ -174,9 +149,38 @@ class RepairBots:
         
         ...
 
+
+    def observe(self,agent_id:int) -> np.ndarray:
+        
+        return np.stack([self.map_layer.agent_view(agent_id),
+                  self.hole_layer.agent_view(agent_id),
+                  self.agent_layer.agent_view(agent_id), # ! review how these 4 layers get parsed
+                  self.agent_status_layer.agent_view(agent_id)],axis=2)
+        
+
+    # UTIL METHODS
+    def _seed(self, seed=None): # ! to review
+        self.np_random, seed_ = seeding.np_random(seed)
+        try:
+            policies = [self.evader_controller, self.pursuer_controller]
+            for policy in policies:
+                try:
+                    policy.set_rng(self.np_random)
+                except AttributeError:
+                    pass
+        except AttributeError:
+            pass
+
+        return [seed_]
     
+    @property
+    def agents(self):
+        return self.pursuers
     
-    # # ? SAMPLE from Connect 4
+    def get_param_values(self):
+        return self.__dict__
+    
+        # # ? SAMPLE from Connect 4
     # # Key
     # # ----
     # # blank space = 0
@@ -206,10 +210,3 @@ class RepairBots:
     #         action_mask[i] = 1
 
     #     return {"observation": observation, "action_mask": action_mask}
-
-    @property
-    def agents(self):
-        return self.pursuers
-    
-    def get_param_values(self):
-        return self.__dict__
