@@ -80,6 +80,7 @@ class Layer():
 
 class Agent:    
     obs_range: int = 2 # ! adjust to 5
+    reduce_holes_by:int=2    
     
     
     def __init__(self,xy:tuple[int,int],rank:int):
@@ -97,7 +98,7 @@ class Agent:
     def position(self):
         return (self.position_y,self.position_x)
     
-    def move(self,action:int,hole_layer:HoleLayer,agent_layer:AgentLayer):
+    def move(self,action:int,hole_layer:HoleLayer,agent_layer:AgentLayer) -> int:
         
         if action==0:
             delta = [-1,0]
@@ -114,6 +115,7 @@ class Agent:
             target_pos[1] >=0 and target_pos[1] < self.layer.shape[1])
         space_empty = hole_layer[target_pos]==0 and agent_layer[target_pos]==0
         
+        reward = 0
         if in_bounds and space_empty:
             self.position_y = target_pos[0]
             self.position_x = target_pos[1]
@@ -132,18 +134,25 @@ class Agent:
                     self.status = 1
                 # should it be removed after a certain number of turns?        
         
-        if self.status==4: # if previously repairing, set status to moving
+        if self.status==2: # if previously repairing, set status to available
             self.status = 1
         
-        ...
+        return reward
     
-    def repair(self):
+    def repair(self,hole_layer:HoleLayer,hole_coords:list[tuple]) -> int:
+        
+        reward = 0
+        for coord in hole_coords:
+            if hole_layer[coord] > 0: # check that hole still exists by agent's turn
+                hole_layer[coord] = max(0,hole_layer[coord]-self.reduce_holes_by) # don't reduce beyond 0
+                reward += 10
         
         if self.status==1: # status only changes to 4 if previously available, otherwise retains status
-            self.status = 4
-        ...
+            self.status = 2
+        
+        return reward
     
-    def note_hole(self,req_n_bots:int) -> None:
+    def note_hole(self,req_n_bots:int) -> int:
         """Used on agent action selection "NOTE HOLE" which is action masked to only be available with a hole in view 
         and if the agent had an available status. Tracks current position as (0,0) and all subsequent movements are 
         calculated from this position.
@@ -151,15 +160,14 @@ class Agent:
         self.status = 3
         self.from_hole = (0,0)
         self.req_n_bots = req_n_bots
-        reward = 1 # small reward to take advantage of the skill
+        reward = 10 # small reward to take advantage of the skill
         return reward
     
-    def share_info(self,agent_layer:AgentLayer,agent_status_layer:AgentStatusLayer) -> None:
+    def share_info(self,agent_layer:AgentLayer,agent_status_layer:AgentStatusLayer) -> int:
         """Used on agent action selection "SHARE INFO" which is action masked to only be available with other agents in
         view. For each of those agents, the sharing agent's obshole_relloc is stored to their obshole_relloc. Each 
         agent shared with decreases the sharers target number of sharing available.
-        """        
-        # ! action mask at env step
+        """                
         al_av = agent_layer.agent_view(self.rank,relative=False)
         asl_av = agent_status_layer.agent_view(self.rank)[0]        
         other_agents = al_av[(al_av!=0) & (asl_av!=0)]
@@ -173,12 +181,13 @@ class Agent:
             self.status = 1
         
         # reward communicating for each agent
-        rewards = other_agents
+        reward = other_agents
         
-        return rewards
+        return reward
     
     def internals():
         # generate agent belief state for obs space
+
 
 class AgentLayer(Layer):
     
@@ -248,7 +257,6 @@ class HoleLayer(Layer):
     add_prob:float=0.05
     expand_at:int=8
     progress_prob:float=0.2
-    reduce_by:int=2    
     
     # FUTURE: generalize the addition of other layers to take into account if map layer has obstacles
     
